@@ -53,11 +53,22 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Checkout our repo (for custom Dockerfile)
+        uses: actions/checkout@v4
+        with:
+          path: diy-image-builder
+
       - name: Checkout upstream release tag
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ needs.check-release.outputs.latest_tag }}
+          path: upstream
+
+      - name: Use our custom Dockerfile
+        run: |
+          cp diy-image-builder/dockerfiles/agentbbs/Dockerfile upstream/Dockerfile
+          echo "Custom Dockerfile copied into upstream source"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -81,8 +92,8 @@ jobs:
       - name: Build and push (runtime-web)
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./upstream
+          file: ./upstream/Dockerfile
           target: runtime-web
           platforms: linux/amd64
           push: true
@@ -102,11 +113,22 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Checkout our repo (for custom Dockerfile)
+        uses: actions/checkout@v4
+        with:
+          path: diy-image-builder
+
       - name: Checkout upstream release tag
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ needs.check-release.outputs.latest_tag }}
+          path: upstream
+
+      - name: Use our custom Dockerfile
+        run: |
+          cp diy-image-builder/dockerfiles/agentbbs/Dockerfile upstream/Dockerfile
+          echo "Custom Dockerfile copied into upstream source"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -130,8 +152,8 @@ jobs:
       - name: Build and push (runtime-ssh)
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./upstream
+          file: ./upstream/Dockerfile
           target: runtime-ssh
           platforms: linux/amd64
           push: true
