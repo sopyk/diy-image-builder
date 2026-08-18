@@ -7,7 +7,7 @@ on:
 
 env:
   UPSTREAM_REPO: THU-MAIC/OpenMAIC
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  IMAGE_NAME: ghcr.io/sopyk/openmaic
 
 permissions:
   packages: write
