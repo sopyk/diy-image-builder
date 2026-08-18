@@ -11,13 +11,13 @@
 
 | 项目 | 上游仓库 | 镜像地址 | 架构 |
 |------|----------|----------|------|
-| OpenMAIC | [THU-MAIC/OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) | `ghcr.io/sopyk/openmaic:latest` | amd64 |
+| OpenMAIC | [THU-MAIC/OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) | `ghcr.io/sopyk/diy-image-builder/openmaic:latest` | amd64 |
 
 ## 🚀 使用方法
 
 ```bash
 # 拉取镜像
-docker pull ghcr.io/sopyk/openmaic:latest
+docker pull ghcr.io/sopyk/diy-image-builder/openmaic:latest
 ```
 
 ## ➕ 添加新项目
