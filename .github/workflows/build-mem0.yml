@@ -1,0 +1,109 @@
+name: Build Mem0 Docker Images
+
+# Mem0 自托管服务：API + Dashboard 两个镜像
+# 上游无 release tag，每周二 UTC 1 点（北京 9 点）构建 main 最新版，也可手动触发
+# 镜像：
+#   ghcr.io/sopyk/diy-image-builder/mem0-api:<tag>
+#   ghcr.io/sopyk/diy-image-builder/mem0-dashboard:<tag>
+
+on:
+  schedule:
+    - cron: '0 1 * * 2'
+  workflow_dispatch:
+
+env:
+  UPSTREAM_REPO: mem0ai/mem0
+  UPSTREAM_REF: main
+
+permissions:
+  packages: write
+
+jobs:
+  build-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo (custom Dockerfiles)
+        uses: actions/checkout@v4
+        with:
+          path: diy-image-builder
+
+      - name: Checkout upstream mem0 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_REF }}
+          path: upstream
+
+      - name: Use production API Dockerfile (drop --reload)
+        run: cp diy-image-builder/dockerfiles/mem0/api.Dockerfile upstream/server/Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/mem0-api
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./upstream/server
+          file: ./upstream/server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=mem0-api
+          cache-to: type=gha,mode=max,scope=mem0-api
+
+  build-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout upstream mem0 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/mem0-dashboard
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Build and push Dashboard image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server/dashboard
+          file: ./server/dashboard/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=mem0-dashboard
+          cache-to: type=gha,mode=max,scope=mem0-dashboard
