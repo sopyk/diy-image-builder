@@ -8,8 +8,11 @@
 #      （官方 dev.Dockerfile 用完整 python:3.12 自带 libpq，所以 dev 能跑）
 #   2) 打入 patch-main.sh：支持 LLM / embedder 分别用环境变量指定
 #      OpenAI 兼容 base_url（MEM0_LLM_BASE_URL / MEM0_EMBEDDER_BASE_URL），
-#      上游只支持共用一个 OPENAI_BASE_URL，无法 LLM 走云端 + embedder 走本地。
-#   3) CMD 去掉 --reload（开发热重载）。
+#      上游只支持共用一个 OPENAI_BASE_URL，无法 LLM 走云端 + embedder 走本地；
+#      MEM0_EMBEDDER_DIMS 同时注入 embedder 与 pgvector vector_store（v2）。
+#   3) 打入 entrypoint.sh：启动时幂等应用 alembic 迁移（上游生产 CMD 漏掉，
+#      导致 users/api_keys 等表永远不建）+ 向量列维度自愈/保护。
+#   4) 无 --reload（开发热重载）。
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -25,13 +28,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# 打入自定义启动补丁（patch-main.sh 由 workflow 从 diy-image-builder 复制进来）
+# 打入自定义启动补丁（两个脚本由 workflow 从 diy-image-builder 复制进来）
 COPY patch-main.sh /usr/local/bin/patch-main.sh
-RUN chmod +x /usr/local/bin/patch-main.sh && /usr/local/bin/patch-main.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/patch-main.sh /usr/local/bin/entrypoint.sh
+
+# 构建期先打一次 main.py 补丁（锚点缺失会立即构建失败，比运行时才发现好）
+RUN /usr/local/bin/patch-main.sh
 
 EXPOSE 8000
 
 ENV PYTHONUNBUFFERED=1
 
-# 启动时先确保补丁就位（幂等），再起服务；生产无 --reload
-CMD ["sh", "-c", "/usr/local/bin/patch-main.sh && uvicorn main:app --host 0.0.0.0 --port 8000"]
+# entrypoint：patch(幂等) → 等库 → 维度自愈 → alembic upgrade head → uvicorn
+CMD ["/usr/local/bin/entrypoint.sh"]

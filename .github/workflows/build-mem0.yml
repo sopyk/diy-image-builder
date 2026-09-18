@@ -38,6 +38,7 @@ jobs:
         run: |
           cp diy-image-builder/dockerfiles/mem0/api.Dockerfile upstream/server/Dockerfile
           cp diy-image-builder/dockerfiles/mem0/patch-main.sh upstream/server/patch-main.sh
+          cp diy-image-builder/dockerfiles/mem0/entrypoint.sh upstream/server/entrypoint.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
