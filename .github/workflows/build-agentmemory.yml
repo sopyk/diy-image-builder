@@ -1,0 +1,132 @@
+name: Build AgentMemory Docker Image
+
+# 做法甲：不在本仓库维护 Dockerfile 副本，构建时直接 checkout 官方 release tag，
+# 使用上游自带的 deploy/coolify/Dockerfile（iii 引擎 + @agentmemory/agentmemory
+# 在同一次构建里合体）。每个 release tag 的 Dockerfile 已把 iii 引擎版本与 npm 包
+# 版本绑定（ARG III_VERSION / AGENTMEMORY_VERSION / III_SDK_VERSION 三者一致），
+# 因此只需跟随 tag，绝不去抓两个各自的 latest。
+#
+# 数据与镜像分离：程序在镜像内，运行期所有状态写入容器 /data（state_store.db、
+# .hmac、向量索引等）。部署时把 /data bind mount 到宿主机目录即可，
+# 升级/重建容器不丢数据。
+
+on:
+  schedule:
+    - cron: '0 1 * * 2'   # 每周二 UTC 1 点（北京时间周二 9 点）
+  workflow_dispatch:      # 支持手动触发
+
+env:
+  UPSTREAM_REPO: rohitg00/agentmemory
+  IMAGE_NAME: ghcr.io/${{ github.repository }}/agentmemory
+  BUILD_CONTEXT_SUBDIR: deploy/coolify
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      new_release: ${{ steps.check.outputs.new_release }}
+      latest_tag: ${{ steps.check.outputs.latest_tag }}
+    steps:
+      - name: Check upstream latest release (with retry)
+        id: check
+        run: |
+          set -euo pipefail
+          LATEST_TAG=""
+          for i in 1 2 3; do
+            LATEST_TAG=$(curl -fsSL \
+              "https://api.github.com/repos/$UPSTREAM_REPO/releases/latest" \
+              | jq -r '.tag_name // empty') || true
+            if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "null" ]; then
+              break
+            fi
+            echo "attempt $i: empty tag, retrying..."; sleep 5
+          done
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "No latest release found after retries"; exit 1
+          fi
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+          # 该 tag 是否已构建过：查 GHCR manifest，存在则跳过，避免重复构建。
+          PACKAGE_NAME=$(echo "${{ github.repository }}/agentmemory" | tr '[:upper:]' '[:lower:]')
+          # tag 形如 v0.9.29，镜像 tag 同时保留原始形式
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://ghcr.io/v2/$PACKAGE_NAME/manifests/$LATEST_TAG" || true)
+          echo "GHCR manifest for $LATEST_TAG -> HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "new_release=false"
+            echo "new_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new_release=true"
+            echo "new_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-docker:
+    needs: check-release
+    if: needs.check-release.outputs.new_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout upstream release tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ needs.check-release.outputs.latest_tag }}
+
+      - name: Sanity-check upstream deploy Dockerfile exists
+        run: |
+          set -euo pipefail
+          test -f "$BUILD_CONTEXT_SUBDIR/Dockerfile"
+          test -f "$BUILD_CONTEXT_SUBDIR/entrypoint.sh"
+          echo "Using official $BUILD_CONTEXT_SUBDIR from ${{ needs.check-release.outputs.latest_tag }}"
+          grep -E 'ARG (III_VERSION|AGENTMEMORY_VERSION|III_SDK_VERSION)' \
+            "$BUILD_CONTEXT_SUBDIR/Dockerfile"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ needs.check-release.outputs.latest_tag }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILD_CONTEXT_SUBDIR }}
+          file: ${{ env.BUILD_CONTEXT_SUBDIR }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### AgentMemory ${{ needs.check-release.outputs.latest_tag }}"
+            echo "- ${{ env.IMAGE_NAME }}:${{ needs.check-release.outputs.latest_tag }}"
+            echo "- ${{ env.IMAGE_NAME }}:latest"
+            echo
+            echo '```'
+            echo "docker pull ${{ env.IMAGE_NAME }}:${{ needs.check-release.outputs.latest_tag }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
