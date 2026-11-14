@@ -71,6 +71,7 @@ docker pull ghcr.io/sopyk/diy-image-builder/wechrss-fulltext:latest
   [`dockerfiles/wechrss/Dockerfile`](./dockerfiles/wechrss/Dockerfile) 去掉了 Playwright/Chromium
   （省 ~600 MB，扫码/订阅/同步都不需要浏览器，只在极端兜底路径才用）并补了 tzdata。
   构建时 checkout 上游 main，把本仓库的 Dockerfile 覆盖上去；tag 用**上游短 SHA**，便于回溯。
+  真要浏览器兜底时，在 Actions 里手动 Run workflow 并勾 `install_chromium`。
 - **wechrss-fulltext** — 本仓库自研组件，源码就在
   [`dockerfiles/wechrss-fulltext/`](./dockerfiles/wechrss-fulltext)，与上游无关，直接构建。
 - **OpenMAIC / ArgyBargy** — checkout 上游源码后用各自方式构建。
