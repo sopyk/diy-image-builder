@@ -19,55 +19,17 @@ env:
   UPSTREAM_REPO: johamwon/wechrss
   UPSTREAM_REF: main
   IMAGE_NAME: ghcr.io/sopyk/diy-image-builder/wechrss
-  # GHCR registry API 里的包名（小写、不带域名）
-  PACKAGE: sopyk/diy-image-builder/wechrss
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    outputs:
-      sha: ${{ steps.info.outputs.sha }}
-      short: ${{ steps.info.outputs.short }}
-      build: ${{ steps.info.outputs.build }}
-    steps:
-      - name: Resolve upstream commit and GHCR state
-        id: info
-        run: |
-          set -euo pipefail
-
-          SHA=$(curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/commits/${UPSTREAM_REF}" | jq -r .sha)
-          SHORT=${SHA:0:7}
-          echo "上游 ${UPSTREAM_REPO}@${UPSTREAM_REF} = ${SHORT}"
-          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "short=${SHORT}" >> "$GITHUB_OUTPUT"
-
-          TOKEN=$(curl -fsSL "https://ghcr.io/token?scope=repository:${PACKAGE}:pull&service=ghcr.io" | jq -r .token)
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${TOKEN}" \
-            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
-            "https://ghcr.io/v2/${PACKAGE}/manifests/sha-${SHORT}" || true)
-          echo "GHCR sha-${SHORT} 探测状态码: ${CODE}"
-
-          # push / 手动触发一律重建（Dockerfile 或镜像本身可能变了）；
-          # 只有定时任务才做「已存在则跳过」的幂等判断
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${CODE}" = "200" ]; then
-            echo "该版本镜像已存在，定时任务跳过构建"
-            echo "build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
-    needs: check
-    if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout this repo (DIY Dockerfiles)
+      - name: Checkout this repo (DIY Dockerfile)
         uses: actions/checkout@v4
         with:
           path: builder
@@ -79,12 +41,15 @@ jobs:
           ref: ${{ env.UPSTREAM_REF }}
           path: upstream
 
-      - name: Inject DIY Dockerfile
+      - name: Read upstream commit
+        id: info
         run: |
           set -euo pipefail
-          cp builder/dockerfiles/wechrss/Dockerfile upstream/Dockerfile
-          echo "上游版本: $(cat upstream/VERSION 2>/dev/null || echo unknown)"
-          grep -n 'INSTALL_CHROMIUM\|FROM' upstream/Dockerfile
+          SHA=$(git -C upstream rev-parse HEAD)
+          SHORT=$(git -C upstream rev-parse --short=7 HEAD)
+          echo "上游 ${UPSTREAM_REPO}@${UPSTREAM_REF} = ${SHORT}（VERSION $(cat upstream/VERSION 2>/dev/null || echo unknown)）"
+          echo "sha=${SHA}"  >> "$GITHUB_OUTPUT"
+          echo "short=${SHORT}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -96,7 +61,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check whether this version already exists in GHCR
+        id: exists
+        run: |
+          set -euo pipefail
+          TAG="sha-${{ steps.info.outputs.short }}"
+          if docker manifest inspect "${IMAGE_NAME}:${TAG}" > /dev/null 2>&1; then
+            echo "${IMAGE_NAME}:${TAG} 已存在"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "${IMAGE_NAME}:${TAG} 不存在，需要构建"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inject DIY Dockerfile
+        run: |
+          set -euo pipefail
+          cp builder/dockerfiles/wechrss/Dockerfile upstream/Dockerfile
+          echo "--- 生效的 Dockerfile 头部 ---"
+          grep -nE '^(FROM|ARG|RUN|CMD)' upstream/Dockerfile
+
       - name: Build and push
+        # 定时任务只在镜像不存在时构建；push / 手动触发一律重建（Dockerfile 可能已改）
+        if: github.event_name != 'schedule' || steps.exists.outputs.exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: ./upstream
@@ -105,25 +92,23 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:sha-${{ needs.check.outputs.short }}
+            ${{ env.IMAGE_NAME }}:sha-${{ steps.info.outputs.short }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ env.UPSTREAM_REPO }}
-            org.opencontainers.image.version=${{ needs.check.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.info.outputs.sha }}
           cache-from: type=gha,scope=wechrss
           cache-to: type=gha,mode=max,scope=wechrss
 
       - name: Summary
         run: |
-          echo "✅ wechrss 镜像已推送（上游 ${UPSTREAM_REPO}@${SHORT}）"
-          echo ""
-          echo "| 项目 | 值 |"
-          echo "|---|---|"
-          echo "| 上游 commit | \`${{ needs.check.outputs.sha }}\` |"
-          echo "| 镜像 | \`${{ env.IMAGE_NAME }}:latest\` |"
-          echo "| 版本 tag | \`sha-${{ needs.check.outputs.short }}\` |"
-          echo ""
-          echo '```bash'
-          echo "docker pull ${{ env.IMAGE_NAME }}:latest"
-          echo '```'
-        env:
-          SHORT: ${{ needs.check.outputs.short }}
+          echo "### WeRSS 构建结果" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项目 | 值 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游 commit | \`${{ steps.info.outputs.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 版本 tag | \`sha-${{ steps.info.outputs.short }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 是否已存在 | ${{ steps.exists.outputs.exists }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```bash' >> "$GITHUB_STEP_SUMMARY"
+          echo "docker pull ${IMAGE_NAME}:latest" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
