@@ -20,6 +20,8 @@
 | Mem0 API | [mem0ai/mem0](https://github.com/mem0ai/mem0) | `…/mem0-api:latest` + `:sha-<sha>` | amd64 | 每周二 | main 有新 commit |
 | Mem0 Dashboard | [mem0ai/mem0](https://github.com/mem0ai/mem0) | `…/mem0-dashboard:latest` + `:sha-<sha>` | amd64 | 每周二 | main 有新 commit |
 | ArgyBargy | [titusblair/argybargy](https://github.com/titusblair/argybargy) | `…/argybargy:latest` | amd64 | 每周二 | main 有新 commit |
+| WeRSS | [johamwon/wechrss](https://github.com/johamwon/wechrss) | `…/wechrss:<上游 sha>` + `:latest` | amd64 | 每周三 | 上游 main 有新 commit |
+| wechrss-fulltext | 本仓库自研（[`dockerfiles/wechrss-fulltext`](./dockerfiles/wechrss-fulltext)） | `…/wechrss-fulltext:latest` + `:sha-<sha>` | amd64 | 每周三 | 本目录代码变更即构建 |
 
 > `…` 代表 `ghcr.io/sopyk/diy-image-builder`。
 
@@ -39,6 +41,10 @@ docker pull ghcr.io/sopyk/diy-image-builder/mem0-dashboard:latest
 
 # ArgyBargy
 docker pull ghcr.io/sopyk/diy-image-builder/argybargy:latest
+
+# WeRSS（微信公众号 → RSS）+ 全文补全中间层
+docker pull ghcr.io/sopyk/diy-image-builder/wechrss:latest
+docker pull ghcr.io/sopyk/diy-image-builder/wechrss-fulltext:latest
 ```
 
 ## 📅 更新时间表
@@ -49,6 +55,8 @@ docker pull ghcr.io/sopyk/diy-image-builder/argybargy:latest
 | OpenMAIC | 每天 08:00 | 上游有新 release tag |
 | Mem0（API + Dashboard） | 每周二 09:00 | main 分支有新 commit，打 `latest` + `sha-*` |
 | ArgyBargy | 每周二 09:00 | main 分支有新 commit |
+| WeRSS | 每周三 09:23 | 上游 main 有新 commit（`sha-*` 已存在则跳过） |
+| wechrss-fulltext | 每周三 09:41 + 代码 push 时 | 本仓库 `dockerfiles/wechrss-fulltext/**` 有变更 |
 
 > GitHub Actions 的 schedule 不保证准点，实际可能延迟数分钟到数十分钟。所有 workflow 均支持 Actions 页面手动触发。
 
@@ -59,6 +67,12 @@ docker pull ghcr.io/sopyk/diy-image-builder/argybargy:latest
   （iii 引擎 + `@agentmemory/agentmemory` 同次构建合体），每个 tag 的 iii 引擎与应用版本由官方绑死，跟随 tag 即可。
 - **Mem0** — 做法乙：官方镜像/构建不满足自托管需求，在本仓库
   [`dockerfiles/`](./dockerfiles) 维护自定义 Dockerfile 与启动补丁，checkout 上游 main 后套用。
+- **WeRSS** — 做法乙：上游只有「装 Chromium 的重镜像」这一个 Dockerfile，本仓库
+  [`dockerfiles/wechrss/Dockerfile`](./dockerfiles/wechrss/Dockerfile) 去掉了 Playwright/Chromium
+  （省 ~600 MB，扫码/订阅/同步都不需要浏览器，只在极端兜底路径才用）并补了 tzdata。
+  构建时 checkout 上游 main，把本仓库的 Dockerfile 覆盖上去；tag 用**上游短 SHA**，便于回溯。
+- **wechrss-fulltext** — 本仓库自研组件，源码就在
+  [`dockerfiles/wechrss-fulltext/`](./dockerfiles/wechrss-fulltext)，与上游无关，直接构建。
 - **OpenMAIC / ArgyBargy** — checkout 上游源码后用各自方式构建。
 
 ## ➕ 添加新项目
